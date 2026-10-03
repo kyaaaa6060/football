@@ -6,13 +6,12 @@ import datetime
 @st.cache_data
 def veri_yukle():
     try:
-        # Önce mevcut Excel dosyasını ana veri tabanı olarak okuyoruz
+        # Excel verilerini ana analiz motoru için yüklüyoruz
         xls = pd.ExcelFile('all-euro-data-2026-2027.xlsx')
         tum_ligler = []
         for sekme in xls.sheet_names:
             df_sekme = pd.read_excel(xls, sheet_name=sekme)
             tum_ligler.append(df_sekme)
-        
         df = pd.concat(tum_ligler, ignore_index=True)
         df = df.dropna(subset=['HomeTeam', 'AwayTeam']) 
         return df
@@ -20,16 +19,13 @@ def veri_yukle():
         st.error(f"Veri yüklenirken hata oluştu: {e}")
         return pd.DataFrame()
 
-# Canlı/Güncel maç skorlarını çekmek için ücretsiz API bağlantısı
-@st.cache_data(ttl=3600) # Saatte bir günceller
-def guncel_maclari_getir():
+# İnternetten güncel ve canlı maç skorlarını çeken fonksiyon
+def canli_maclari_getir():
     try:
-        # Ücretsiz futbol veri servisinden bugünün maçlarını ve sonuçlarını çekiyoruz
         bugun = datetime.datetime.now().strftime('%Y-%m-%d')
+        # Ücretsiz futbol veri servisinden günün maçlarını çekiyoruz
         url = f"https://api.football-data.org/v4/matches?dateFrom={bugun}&dateTo={bugun}"
-        # Not: API anahtarı gerektirmeyen veya açık katmanlı alternatif uçlar kullanılabilir
-        headers = {'X-Auth-Token': 'SERVIS_TOKENI'} # İhtiyaç halinde ücretsiz alınabilir
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, timeout=5)
         if response.status_code == 200:
             return response.json().get('matches', [])
     except:
@@ -37,19 +33,13 @@ def guncel_maclari_getir():
     return []
 
 def detayli_mac_analizi(df, ev_sahibi, deplasman):
-    # Veri setinden ilgili takımların verilerini ayıkla
-    ev_genel = df[(df['HomeTeam'] == ev_sahibi) | (df['AwayTeam'] == ev_sahibi)].tail(10)
-    dep_genel = df[(df['HomeTeam'] == deplasman) | (df['AwayTeam'] == deplasman)].tail(10)
     ev_ic = df[df['HomeTeam'] == ev_sahibi].tail(5)
     dep_dis = df[df['AwayTeam'] == deplasman].tail(5)
-    
     h2h = df[((df['HomeTeam'] == ev_sahibi) & (df['AwayTeam'] == deplasman)) | 
              ((df['HomeTeam'] == deplasman) & (df['AwayTeam'] == ev_sahibi))].tail(5)
 
-    # Gol ortalamaları hesabı
     ev_atilan_ort = ev_ic.apply(lambda x: x['FTHG'] if x['HomeTeam'] == ev_sahibi else x['FTAG'], axis=1).mean()
     ev_yenen_ort = ev_ic.apply(lambda x: x['FTAG'] if x['HomeTeam'] == ev_sahibi else x['FTHG'], axis=1).mean()
-    
     dep_atilan_ort = dep_dis.apply(lambda x: x['FTAG'] if x['AwayTeam'] == deplasman else x['FTHG'], axis=1).mean()
     dep_yenen_ort = dep_dis.apply(lambda x: x['FTAG'] if x['AwayTeam'] == deplasman else x['FTHG'], axis=1).mean()
 
@@ -58,7 +48,6 @@ def detayli_mac_analizi(df, ev_sahibi, deplasman):
     if pd.isna(dep_atilan_ort): dep_atilan_ort = 1.1
     if pd.isna(dep_yenen_ort): dep_yenen_ort = 1.2
 
-    # Poisson Dağılımı ve Olasılık Hesaplama
     ev_beklenen_gol = (ev_atilan_ort + dep_yenen_ort) / 2
     dep_beklenen_gol = (dep_atilan_ort + ev_yenen_ort) / 2
 
@@ -69,16 +58,14 @@ def detayli_mac_analizi(df, ev_sahibi, deplasman):
     tahmini_ev_gol = round(ev_beklenen_gol)
     tahmini_dep_gol = round(dep_beklenen_gol)
 
-    # Örüntü (Trend) Analizi Tespiti
     oruntuler = []
-    
     if (ev_atilan_ort + dep_atilan_ort) > 2.8:
-        oruntuler.append("🔥 **Yüksek Gol Eğilimi:** Son maçlarındaki gol ortalamaları 2.5 ÜST seçeneğini güçlü şekilde destekliyor.")
+        oruntuler.append("🔥 **Yüksek Gol Eğilimi:** Son maçlarındaki gol ortalamaları 2.5 ÜST seçeneğini destekliyor.")
     else:
         oruntuler.append("🛡️ **Düşük Tempo / Kısıtlı Skor:** Takımların son maçlarında maç başı gol ortalamaları 2.5 Alt sınırında seyrediyor.")
 
     if ev_yenen_ort > 1.0 and dep_yenen_ort > 1.0:
-        oruntuler.append("⚡ **Defansif Zaafiyet:** Her iki takım da düzenli olarak gol yiyor (Karşılıklı Gol Var potansiyeli yüksek).")
+        oruntuler.append("⚡ **Defansif Zaafiyet:** Her iki takım da düzenli olarak gol yiyor (KG Var potansiyeli yüksek).")
 
     favori_durumu = "Oran Verisi Bulunamadı"
     if not h2h.empty and 'B365H' in h2h.columns:
@@ -103,48 +90,79 @@ def detayli_mac_analizi(df, ev_sahibi, deplasman):
     }
 
 # --- STREAMLIT ARAYÜZÜ ---
-st.set_page_config(layout="wide", page_title="Gelişmiş Futbol Analiz ve Tahmin Paneli")
-st.title("⚽ Canlı Destekli Gelişmiş Maç Analizi ve Örüntü Motoru")
+st.set_page_config(layout="wide", page_title="Futbol Analiz ve Canlı Skor Paneli")
+st.title("⚽ Gelişmiş Futbol Analiz ve Canlı Skor Paneli")
+
+# Sekmeler (Analiz ve Canlı Skorlar)
+sekme1, sekme2 = st.tabs(["📊 Derinlemesine Maç Analizi", "🔴 Canlı Maçlar ve Skorlar"])
 
 df = veri_yukle()
 
-if not df.empty:
-    takimlar = sorted(df['HomeTeam'].astype(str).unique())
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        ev_sahibi = st.selectbox("Ev Sahibi Takım", takimlar, index=0)
-    with col2:
-        deplasman = st.selectbox("Deplasman Takım", takimlar, index=1 if len(takimlar) > 1 else 0)
+with sekme1:
+    st.subheader("İstatistiksel Tahmin ve Örüntü Motoru")
+    if not df.empty:
+        takimlar = sorted(df['HomeTeam'].astype(str).unique())
         
-    if st.button("Derinlemesine Analiz ve Tahminleri Üret"):
-        sonuc = detayli_mac_analizi(df, ev_sahibi, deplasman)
-        
-        st.markdown("---")
-        
-        # Skor ve Olasılık Kartları
-        m1, m2, m3 = st.columns(3)
-        with m1:
-            st.metric(label=f"{ev_sahibi} Kazanma İhtimali", value=f"%{sonuc['ev_oran']}")
-        with m2:
-            st.metric(label="Beraberlik İhtimali", value=f"%{sonuc['beraberlik_oran']}")
-        with m3:
-            st.metric(label=f"{deplasman} Kazanma İhtimali", value=f"%{sonuc['dep_oran']}")
+        col1, col2 = st.columns(2)
+        with col1:
+            ev_sahibi = st.selectbox("Ev Sahibi Takım", takimlar, index=0, key="ev_key")
+        with col2:
+            deplasman = st.selectbox("Deplasman Takım", takimlar, index=1 if len(takimlar) > 1 else 0, key="dep_key")
             
-        st.markdown("---")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("🎯 Tahmini Maç Skoru")
-            st.markdown(f"### **{ev_sahibi} {sonuc['skor_tahmini']} {deplasman}**")
-            st.write(f"* Ev Sahibi Gol Beklentisi (xG Bazlı): **{sonuc['ev_gol_beklentisi']}**")
-            st.write(f"* Deplasman Gol Beklentisi (xG Bazlı): **{sonuc['dep_gol_beklentisi']}**")
+        if st.button("Analiz Et ve Tahminleri Üret"):
+            sonuc = detayli_mac_analizi(df, ev_sahibi, deplasman)
+            st.markdown("---")
             
-        with c2:
-            st.subheader("📊 Algoritma Örüntüleri ve Trendler")
-            for t in sonuc['oruntuler']:
-                st.write(t)
-            st.write(f"* **H2H Tarihsel Piyasası:** {sonuc['h2h_favori']} ({sonuc['h2h_mac_sayisi']} maç incelendi)")
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric(label=f"{ev_sahibi} Kazanma İhtimali", value=f"%{sonuc['ev_oran']}")
+            with m2:
+                st.metric(label="Beraberlik İhtimali", value=f"%{sonuc['beraberlik_oran']}")
+            with m3:
+                st.metric(label=f"{deplasman} Kazanma İhtimali", value=f"%{sonuc['dep_oran']}")
+                
+            st.markdown("---")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("🎯 Tahmini Maç Skoru")
+                st.markdown(f"### **{ev_sahibi} {sonuc['skor_tahmini']} {deplasman}**")
+                st.write(f"* Ev Sahibi Gol Beklentisi (xG): **{sonuc['ev_gol_beklentisi']}**")
+                st.write(f"* Deplasman Gol Beklentisi (xG): **{sonuc['dep_gol_beklentisi']}**")
+            with c2:
+                st.subheader("📊 Algoritma Örüntüleri ve Trendler")
+                for t in sonuc['oruntuler']:
+                    st.write(t)
+                st.write(f"* **H2H Tarihsel Piyasası:** {sonuc['h2h_favori']} ({sonuc['h2h_mac_sayisi']} maç)")
+    else:
+        st.warning("Veri yüklenemedi.")
 
-else:
-    st.warning("Veri yüklenemedi. Lütfen Excel dosyasının depoda olduğundan emin olun.")
+with sekme2:
+    st.subheader("Günün Canlı Maç Akışı")
+    if st.button("🔄 Skorları Güncelle"):
+        st.rerun()
+        
+    canli_maclar = canli_maclari_getir()
+    
+    if canli_maclar:
+        for mac in canli_maclar:
+            ev = mac['homeTeam']['name']
+            dep = mac['awayTeam']['name']
+            durum = mac['status']
+            skor_ev = mac['score']['fullTime']['home']
+            skor_dep = mac['score']['fullTime']['away']
+            lig = mac['competition']['name']
+            
+            durum_metni = "🔴 CANLI" if durum == "IN_PLAY" else ("✅ BİTTİ" if durum == "FINISHED" else "⏳ BAŞLAMADI")
+            
+            with st.container():
+                st.info(f"**{lig}** | Durum: **{durum_metni}**")
+                cm1, cm2, cm3 = st.columns([3, 2, 3])
+                with cm1:
+                    st.markdown(f"<h4 style='text-align: right;'>{ev}</h4>", unsafe_allow_html=True)
+                with cm2:
+                    st.markdown(f"<h3 style='text-align: center;'>{skor_ev} - {skor_dep}</h3>", unsafe_allow_html=True)
+                with cm3:
+                    st.markdown(f"<h4 style='text-align: left;'>{dep}</h4>", unsafe_allow_html=True)
+                st.markdown("---")
+    else:
+        st.info("Bugün için aktif canlı maç verisi bulunamadı veya maç saatini bekliyor.")
