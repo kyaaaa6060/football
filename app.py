@@ -3,13 +3,11 @@ import streamlit as st
 import requests
 import datetime
 
-# İnternet üzerinden seçilen takımın güncel maç sonuçlarını ve form durumunu çeken motor
-@st.cache_data(ttl=1800) # 30 dakikada bir önbelleği yeniler
+@st.cache_data(ttl=1800)
 def internetten_takim_verilerini_cek(lig_kodu):
     try:
-        # Futbol veri API'sinden ilgili ligin son maçlarını ve fikstürünü çekiyoruz
         url = f"https://api.football-data.org/v4/competitions/{lig_kodu}/matches?status=FINISHED"
-        headers = {} # Gerekirse ücretsiz token buraya eklenebilir
+        headers = {}
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
@@ -18,7 +16,6 @@ def internetten_takim_verilerini_cek(lig_kodu):
         pass
     return []
 
-# Güncel maçlar için canlı skor motoru
 @st.cache_data(ttl=600)
 def canli_maclari_getir():
     try:
@@ -32,11 +29,9 @@ def canli_maclari_getir():
     return []
 
 def otomatik_mac_analizi(maclar, ev_sahibi, deplasman):
-    # İnternetten gelen son maçlar arasından takımların son 5 maçını filtrele
     ev_maclari = [m for m in maclar if m['homeTeam']['name'] == ev_sahibi or m['awayTeam']['name'] == ev_sahibi][-5:]
     dep_maclari = [m for m in maclar if m['homeTeam']['name'] == deplasman or m['awayTeam']['name'] == deplasman][-5:]
 
-    # Gol ortalamaları hesabı (Otomatik)
     ev_atilan, ev_yenen = 0, 0
     for m in ev_maclari:
         if m['homeTeam']['name'] == ev_sahibi:
@@ -60,7 +55,6 @@ def otomatik_mac_analizi(maclar, ev_sahibi, deplasman):
     dep_at_ort = (dep_atilan / len(dep_maclari)) if dep_maclari else 1.2
     dep_yen_ort = (dep_yenen / len(dep_maclari)) if dep_maclari else 1.1
 
-    # Poisson & Beklenen Gol (xG) Modeli
     ev_beklenen = (ev_at_ort + dep_yen_ort) / 2
     dep_beklenen = (dep_at_ort + ev_yen_ort) / 2
 
@@ -71,15 +65,14 @@ def otomatik_mac_analizi(maclar, ev_sahibi, deplasman):
     tahmini_ev_gol = round(ev_beklenen)
     tahmini_dep_gol = round(dep_beklenen)
 
-    # Örüntü ve Trend Tespiti
     oruntuler = []
     if (ev_at_ort + dep_at_ort) > 2.7:
         oruntuler.append("🔥 **Yüksek Gol Eğilimi:** Takımların güncel son maçlarında maç başı gol ortalamaları yüksek (2.5 Üst potansiyeli).")
     else:
-        oruntuler.append("🛡️️ **Düşük Tempo:** Son karşılaşmalarda skor üretimi kısıtlı seyrediyor.")
+        oruntuler.append("🛡 **Düşük Tempo:** Son karşılaşmalarda skor üretimi kısıtlı seyrediyor.")
 
     if ev_yen_ort > 1.1 and dep_yen_ort > 1.1:
-        oruntuler.append("⚡ **Savunma Zaafiyeti:** Her iki taraf da son maçlarında düzenli gol yliyor (KG Var güçlü aday).")
+        oruntuler.append("⚡ **Savunma Zaafiyeti:** Her iki taraf da son maçlarında düzenli gol yiyor (KG Var güçlü aday).")
 
     return {
         "ev_gol_beklentisi": round(ev_beklenen, 2),
@@ -92,20 +85,18 @@ def otomatik_mac_analizi(maclar, ev_sahibi, deplasman):
         "analiz_edilen_mac": max(len(ev_maclari), len(dep_maclari))
     }
 
-# --- STREAMLIT ARAYÜZÜ ---
 st.set_page_config(layout="wide", page_title="Otomatik Canlı Futbol Analiz Paneli")
 st.title("⚽ Tamamen Otomatik Canlı Analiz ve Skor Motoru")
 
 sekme1, sekme2 = st.tabs(["📊 Akıllı Maç Tahmin Motoru", "🔴 Canlı Skor Merkezi"])
 
-# Desteklenen popüler lig kodları (API uyumlu)
 ligler = {
     "İngiltere Premier Lig": "PL",
     "İspanya La Liga": "PD",
     "İtalya Serie A": "SA",
     "Almanya Bundesliga": "BL1",
     "Fransa Ligue 1": "FL1",
-    "Türkiye Süper Lig (Global Takip)": "CL" # Destekleyen genel havuz
+    "Türkiye Süper Lig (Global Takip)": "CL"
 }
 
 with sekme1:
@@ -117,7 +108,6 @@ with sekme1:
         maclar = internetten_takim_verilerini_cek(lig_kodu)
 
     if maclar:
-        # Ligdeki benzersiz takımları otomatik listeden bul
         takimlar_set = set()
         for m in maclar:
             takimlar_set.add(m['homeTeam']['name'])
@@ -152,7 +142,8 @@ with sekme1:
                     st.write(f"* Deplasman Gol Beklentisi (Güncel xG): **{sonuc['dep_gol_beklentisi']}**")
                 with c2:
                     st.subheader("📊 Otomatik Algoritma Trendleri")
-                    for t in sonucler := sonuc['oruntuler']:
+                    # Düzeltilen kısım (hata veren := kaldırıldı)
+                    for t in sonuc['oruntuler']:
                         st.write(t)
                     st.write(f"* **Veri Kaynağı:** Son {sonuc['analiz_edilen_mac']} resmi maç taranarak hesaplandı.")
         else:
