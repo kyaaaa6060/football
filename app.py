@@ -3,23 +3,10 @@ import streamlit as st
 import requests
 import datetime
 
-@st.cache_data
-def veri_yukle():
-    try:
-        xls = pd.ExcelFile('all-euro-data-2026-2027.xlsx')
-        tum_ligler = []
-        for sekme in xls.sheet_names:
-            df_sekme = pd.read_excel(xls, sheet_name=sekme)
-            tum_ligler.append(df_sekme)
-        df = pd.concat(tum_ligler, ignore_index=True)
-        df = df.dropna(subset=['HomeTeam', 'AwayTeam']) 
-        return df
-    except:
-        return pd.DataFrame()
-
 @st.cache_data(ttl=1800)
 def internetten_takim_verilerini_cek(lig_kodu):
     try:
+        # İnternetten ilgili ligin bitmiş tüm güncel maçlarını çekiyoruz (Arşiv ve Analiz için)
         url = f"https://api.football-data.org/v4/competitions/{lig_kodu}/matches?status=FINISHED"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
@@ -40,44 +27,61 @@ def canli_maclari_getir():
         pass
     return []
 
-def arsiv_ve_gecmis_analizi(df, ev_sahibi, deplasman):
-    if df.empty:
+# İnternetten gelen güncel maçlar üzerinden geçmiş/H2H analizi yapan motor
+def internet_uzerinden_gecmis_analizi(maclar, ev_sahibi, deplasman):
+    if not maclar:
         return {"gecmis_senaryolar": []}
     
-    h2h_maclar = df[((df['HomeTeam'] == ev_sahibi) & (df['AwayTeam'] == deplasman)) | 
-                    ((df['HomeTeam'] == deplasman) & (df['AwayTeam'] == ev_sahibi))]
+    # Seçilen iki takımın internetteki güncel geçmiş karşılaşmaları (H2H)
+    h2h_maclar = [m for m in maclar if (m['homeTeam']['name'] == ev_sahibi and m['awayTeam']['name'] == deplasman) or 
+                                       (m['homeTeam']['name'] == deplasman and m['awayTeam']['name'] == ev_sahibi)]
     
-    ev_arsiv = df[(df['HomeTeam'] == ev_sahibi) | (df['AwayTeam'] == ev_sahibi)].tail(10)
+    # Ev sahibinin güncel son maçları
+    ev_son_maclar = [m for m in maclar if m['homeTeam']['name'] == ev_sahibi or m['awayTeam']['name'] == ev_sahibi][-10:]
 
     toplam_h2h = len(h2h_maclar)
     gecmis_senaryolar = []
 
     if toplam_h2h > 0:
-        ev_galibiyet = len(h2h_maclar[((h2h_maclar['HomeTeam'] == ev_sahibi) & (h2h_maclar['FTR'] == 'H')) | 
-                                       ((h2h_maclar['AwayTeam'] == ev_sahibi) & (h2h_maclar['FTR'] == 'A'))])
-        dep_galibiyet = len(h2h_maclar[((h2h_maclar['HomeTeam'] == deplasman) & (h2h_maclar['FTR'] == 'H')) | 
-                                        ((h2h_maclar['AwayTeam'] == deplasman) & (h2h_maclar['FTR'] == 'A'))])
-        beraberlikler = toplam_h2h - (ev_galibiyet + dep_galibiyet)
-        
-        metin = f"Bu iki takım arşivde daha önce {toplam_h2h} kez karşılaşmış. {ev_sahibi}: {ev_galibiyet} kez kazandı, {deplasman}: {dep_galibiyet} kez kazandı, Beraberlik: {beraberlik}."
+        ev_galibiyet = 0
+        dep_galibiyet = 0
+        beraberlikler = 0
+        for m in h2h_maclar:
+            kazanan = m['score']['winner'] # HOME_TEAM, AWAY_TEAM, DRAW
+            kazanan_takim = m['homeTeam']['name'] if kazanan == 'HOME_TEAM' else (m['awayTeam']['name'] if kazanan == 'AWAY_TEAM' else None)
+            
+            if kazanan_takim == ev_sahibi:
+                ev_galibiyet += 1
+            elif kazanan_takim == deplasman:
+                dep_galibiyet += 1
+            else:
+                beraberlikler += 1
+
+        metin = f"İnternetteki güncel kayıtlara göre bu iki takım daha önce {toplam_h2h} kez karşılaşmış. {ev_sahibi}: {ev_galibiyet} galibiyet, {deplasman}: {dep_galibiyet} galibiyet, Beraberlik: {beraberlikler}."
         gecmis_senaryolar.append({
-            "baslik": f"📁 Doğrudan Geçmiş Karşılaşmalar (H2H - {toplam_h2h} Maç)",
+            "baslik": f"📁 Güncel Karşılıklı Maç Arşivi (H2H - {toplam_h2h} Maç)",
             "detay": metin
         })
     else:
         gecmis_senaryolar.append({
-            "baslik": "📁 Doğrudan Geçmiş Karşılaşma Bulunamadı",
-            "detay": "Bu iki ekip arşive kaydedilen dönemde doğrudan resmi maç yapmamış."
+            "baslik": "📁 Doğrudan Karşılaşma Bulunamadı",
+            "detay": "Bu iki ekip bu sezon güncel veri havuzunda doğrudan resmi maç yapmamış."
         })
 
-    if not ev_arsiv.empty and 'FTHG' in ev_arsiv.columns and 'FTAG' in ev_arsiv.columns:
-        ev_arsiv = ev_arsiv.copy()
-        ev_arsiv['ToplamGol'] = ev_arsiv['FTHG'] + ev_arsiv['FTAG']
-        ust_sayisi = len(ev_arsiv[ev_arsiv['ToplamGol'] > 2.5])
-        ust_yuzde = round((ust_sayisi / len(ev_arsiv)) * 100)
+    # Güncel gol eğilimleri
+    if ev_son_maclar:
+        toplam_gol = 0
+        ust_sayisi = 0
+        for m in ev_son_maclar:
+            hg = m['score']['fullTime']['home'] or 0
+            ag = m['score']['fullTime']['away'] or 0
+            t_gol = hg + ag
+            if t_gol > 2.5:
+                ust_sayisi += 1
+        ust_yuzde = round((ust_sayisi / len(ev_son_maclar)) * 100)
         gecmis_senaryolar.append({
-            "baslik": f"📊 Arşiv Gol Oranı Eğilimi ({ev_sahibi})",
-            "detay": f"Arşivdeki son maçlarına bakıldığında {ev_sahibi} maçlarının %{ust_yuzde} oranında 2.5 Gol Üstü bittiği görülüyor."
+            "baslik": f"📊 Güncel Gol Oranı Eğilimi ({ev_sahibi})",
+            "detay": f"{ev_sahibi} takımının son {len(ev_son_maclar)} resmi maçının %{ust_yuzde} oranında 2.5 Gol Üstü bittiği görülüyor."
         })
 
     return {
@@ -85,12 +89,11 @@ def arsiv_ve_gecmis_analizi(df, ev_sahibi, deplasman):
         "h2h_sayisi": toplam_h2h
     }
 
-st.set_page_config(layout="wide", page_title="Arşiv ve Canlı Futbol Analiz Paneli")
-st.title("⚽ Kapsamlı Arşiv & Canlı Tahmin Motoru")
+st.set_page_config(layout="wide", page_title="Canlı ve Güncel Futbol Analiz Paneli")
+st.title("⚽ Tamamen Canlı ve Güncel Arşiv / Tahmin Motoru")
 
-sekme1, sekme2, sekme3 = st.tabs(["📊 Güncel / Canlı Tahmin", "📁 Arşiv & Eski Maç Benzerlikleri", "🔴 Canlı Skor Merkezi"])
+sekme1, sekme2, sekme3 = st.tabs(["📊 Güncel / Canlı Tahmin", "📁 Güncel Arşiv & Geçmiş Analiz", "🔴 Canlı Skor Merkezi"])
 
-df_arsiv = veri_yukle()
 ligler = {
     "İngiltere Premier Lig": "PL",
     "İspanya La Liga": "PD",
@@ -103,7 +106,7 @@ ligler = {
 
 with sekme1:
     st.subheader("İnternetten Otomatik Beslenen Güncel Tahmin Motoru")
-    secilen_lig = st.selectbox("Lig Seçin (Güncel)", list(ligler.keys()), key="s1")
+    secilen_lig = st.selectbox("Lig Seçin", list(ligler.keys()), key="s1")
     maclar = internetten_takim_verilerini_cek(ligler[secilen_lig])
 
     if maclar:
@@ -115,30 +118,34 @@ with sekme1:
             with c2: dep = st.selectbox("Deplasman", takimlar, key="dep1")
 
             if st.button("Güncel Analizi Çalıştır"):
-                st.success(f"{ev} ve {dep} için güncel form analizi başarıyla tamamlandı!")
+                st.success(f"{ev} ve {dep} için internetteki güncel verilerle analiz yapıldı!")
         else:
             st.warning("Yeterli takım verisi yok.")
 
 with sekme2:
-    st.subheader("📁 Arşivdeki Eski Maçlar ve Benzerlik / İhtimal Taraması")
-    if not df_arsiv.empty:
-        arsiv_takimlar = sorted(df_arsiv['HomeTeam'].astype(str).unique())
+    st.subheader("📁 İnternet Tabanlı Güncel Arşiv ve Geçmiş Taraması")
+    secilen_lig_arsiv = st.selectbox("Lig Seçin (Arşiv için)", list(ligler.keys()), key="s_arsiv")
+    arsiv_maclari = internetten_takim_verilerini_cek(ligler[secilen_lig_arsiv])
+
+    if arsiv_maclari:
+        a_set = set(m['homeTeam']['name'] for m in arsiv_maclari).union(set(m['awayTeam']['name'] for m in arsiv_maclari))
+        arsiv_takimlar = sorted(list(a_set))
         
         ac1, ac2 = st.columns(2)
-        with ac1: a_ev = st.selectbox("Arşivden Ev Sahibi Seç", arsiv_takimlar, key="a_ev")
-        with ac2: a_dep = st.selectbox("Arşivden Deplasman Seç", arsiv_takimlar, key="a_dep")
+        with ac1: a_ev = st.selectbox("Ev Sahibi Seç", arsiv_takimlar, key="a_ev")
+        with ac2: a_dep = st.selectbox("Deplasman Seç", arsiv_takimlar, key="a_dep")
 
-        if st.button("Arşivdeki Benzerlikleri ve İhtimalleri Getir"):
-            arsiv_sonuc = arsiv_ve_gecmis_analizi(df_arsiv, a_ev, a_dep)
+        if st.button("Güncel Geçmiş Arşivini Getir"):
+            arsiv_sonuc = internet_uzerinden_gecmis_analizi(arsiv_maclari, a_ev, a_dep)
             st.markdown("---")
-            st.markdown(f"### 🔍 {a_ev} vs {a_dep} - Geçmiş Arşiv Raporu")
+            st.markdown(f"### 🔍 {a_ev} vs {a_dep} - İnternet Tabanlı Güncel Arşiv Raporu")
             
             for sen in arsiv_sonuc['gecmis_senaryolar']:
                 st.markdown(f"**{sen['baslik']}**")
                 st.write(sen['detay'])
                 st.markdown("")
     else:
-        st.warning("Arşivde okunacak Excel dosyası bulunamadı. Lütfen 'all-euro-data-2026-2027.xlsx' dosyasının reponuzda olduğundan emin olun.")
+        st.warning("Seçilen lig için internetten arşiv verisi alınamadı.")
 
 with sekme3:
     st.subheader("Günün Canlı Maç Takip Ekranı")
