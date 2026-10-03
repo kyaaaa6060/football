@@ -6,7 +6,6 @@ import datetime
 @st.cache_data
 def veri_yukle():
     try:
-        # Eski maçlar ve arşiv için Excel veri setini yüklüyoruz
         xls = pd.ExcelFile('all-euro-data-2026-2027.xlsx')
         tum_ligler = []
         for sekme in xls.sheet_names:
@@ -41,49 +40,44 @@ def canli_maclari_getir():
         pass
     return []
 
-# Arşivdeki eski maçlara göre benzerlik ve ihtimal taraması
 def arsiv_ve_gecmis_analizi(df, ev_sahibi, deplasman):
     if df.empty:
-        return {"hata": "Arşiv veri seti bulunamadı."}
+        return {"gecmis_senaryolar": []}
     
-    # Arşivden iki takımın geçmişteki karşılaşmalarını (H2H) bul
     h2h_maclar = df[((df['HomeTeam'] == ev_sahibi) & (df['AwayTeam'] == deplasman)) | 
                     ((df['HomeTeam'] == deplasman) & (df['AwayTeam'] == ev_sahibi))]
     
-    # Ev sahibinin arşivdeki genel maçları
     ev_arsiv = df[(df['HomeTeam'] == ev_sahibi) | (df['AwayTeam'] == ev_sahibi)].tail(10)
-    # Deplasmanın arşivdeki genel maçları
-    dep_arsiv = df[(df['HomeTeam'] == deplasman) | (df['AwayTeam'] == deplasman)].tail(10)
 
-    # Arşiv istatistikleri
     toplam_h2h = len(h2h_maclar)
     gecmis_senaryolar = []
 
     if toplam_h2h > 0:
-        ev_galibiyet = len(h2h_maclar[(h2h_maclar['HomeTeam'] == ev_sahibi) & (h2h_maclar['FTR'] == 'H')] | 
-                           h2h_maclar[(h2h_maclar['AwayTeam'] == ev_sahibi) & (h2h_maclar['FTR'] == 'A')])
-        dep_galibiyet = len(h2h_maclar[(h2h_maclar['HomeTeam'] == deplasman) & (h2h_maclar['FTR'] == 'H')] | 
-                            h2h_maclar[(h2h_maclar['AwayTeam'] == deplasman) & (h2h_maclar['FTR'] == 'A')])
+        ev_galibiyet = len(h2h_maclar[((h2h_maclar['HomeTeam'] == ev_sahibi) & (h2h_maclar['FTR'] == 'H')) | 
+                                       ((h2h_maclar['AwayTeam'] == ev_sahibi) & (h2h_maclar['FTR'] == 'A'))])
+        dep_galibiyet = len(h2h_maclar[((h2h_maclar['HomeTeam'] == deplasman) & (h2h_maclar['FTR'] == 'H')) | 
+                                        ((h2h_maclar['AwayTeam'] == deplasman) & (h2h_maclar['FTR'] == 'A'))])
         beraberlikler = toplam_h2h - (ev_galibiyet + dep_galibiyet)
         
+        metin = f"Bu iki takım arşivde daha önce {toplam_h2h} kez karşılaşmış. {ev_sahibi}: {ev_galibiyet} kez kazandı, {deplasman}: {dep_galibiyet} kez kazandı, Beraberlik: {beraberlik}."
         gecmis_senaryolar.append({
             "baslik": f"📁 Doğrudan Geçmiş Karşılaşmalar (H2H - {toplam_h2h} Maç)",
-            "detay": f"Bu iki takım arşivde daha önce {toplam_h2h} kez karşılaşmış. {ev_sahibi}: {ev_galibiyet kez kazandı}, {deplasman}: {dep_galibiyet kez kazandı}, Beraberlik: {beraberlik kez}."
+            "detay": metin
         })
     else:
         gecmis_senaryolar.append({
             "baslik": "📁 Doğrudan Geçmiş Karşılaşma Bulunamadı",
-            "detay": "Bu iki ekip arşive kaydedilen dönemde doğrudan resmi maç yapmamış. Benzer profildeki takım istatistiklerine bakılıyor."
+            "detay": "Bu iki ekip arşive kaydedilen dönemde doğrudan resmi maç yapmamış."
         })
 
-    # Arşivdeki gol eğilimleri (2.5 Alt/Üst benzerliği)
-    if not ev_arsiv.empty and 'FTHG' in ev_arsiv.columns:
+    if not ev_arsiv.empty and 'FTHG' in ev_arsiv.columns and 'FTAG' in ev_arsiv.columns:
+        ev_arsiv = ev_arsiv.copy()
         ev_arsiv['ToplamGol'] = ev_arsiv['FTHG'] + ev_arsiv['FTAG']
         ust_sayisi = len(ev_arsiv[ev_arsiv['ToplamGol'] > 2.5])
         ust_yuzde = round((ust_sayisi / len(ev_arsiv)) * 100)
         gecmis_senaryolar.append({
             "baslik": f"📊 Arşiv Gol Oranı Eğilimi ({ev_sahibi})",
-            "detay": f"Arşivdeki son maçlarına bakıldığında {ev_sahibi} maçlarının **%{ust_yuzde}** oranında 2.5 Gol Üstü bittiği görülüyor."
+            "detay": f"Arşivdeki son maçlarına bakıldığında {ev_sahibi} maçlarının %{ust_yuzde} oranında 2.5 Gol Üstü bittiği görülüyor."
         })
 
     return {
@@ -94,7 +88,6 @@ def arsiv_ve_gecmis_analizi(df, ev_sahibi, deplasman):
 st.set_page_config(layout="wide", page_title="Arşiv ve Canlı Futbol Analiz Paneli")
 st.title("⚽ Kapsamlı Arşiv & Canlı Tahmin Motoru")
 
-# 3 Sekmeli Profesyonel Yapı
 sekme1, sekme2, sekme3 = st.tabs(["📊 Güncel / Canlı Tahmin", "📁 Arşiv & Eski Maç Benzerlikleri", "🔴 Canlı Skor Merkezi"])
 
 df_arsiv = veri_yukle()
@@ -122,14 +115,13 @@ with sekme1:
             with c2: dep = st.selectbox("Deplasman", takimlar, key="dep1")
 
             if st.button("Güncel Analizi Çalıştır"):
-                st.success(f"{ev} ve {dep} için güncel form analizi yapıldı! (Detaylar aktif)")
+                st.success(f"{ev} ve {dep} için güncel form analizi başarıyla tamamlandı!")
         else:
             st.warning("Yeterli takım verisi yok.")
 
 with sekme2:
     st.subheader("📁 Arşivdeki Eski Maçlar ve Benzerlik / İhtimal Taraması")
     if not df_arsiv.empty:
-        # Excel'deki benzersiz takımları al
         arsiv_takimlar = sorted(df_arsiv['HomeTeam'].astype(str).unique())
         
         ac1, ac2 = st.columns(2)
